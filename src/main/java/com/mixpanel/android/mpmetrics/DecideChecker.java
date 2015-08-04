@@ -28,37 +28,51 @@ import java.util.List;
         public Result() {
             surveys = new ArrayList<Survey>();
             notifications = new ArrayList<InAppNotification>();
+            eventBindings = EMPTY_JSON_ARRAY;
         }
         public final List<Survey> surveys;
         public final List<InAppNotification> notifications;
+        public JSONArray eventBindings;
     }
 
     public DecideChecker(final Context context, final MPConfig config) {
         mContext = context;
         mConfig = config;
-        mChecks = new LinkedList<DecideUpdates>();
+        mChecks = new LinkedList<DecideMessages>();
     }
 
-    public void addDecideCheck(final DecideUpdates check) {
+    public void addDecideCheck(final DecideMessages check) {
         mChecks.add(check);
     }
 
     public void runDecideChecks(final ServerMessage poster) {
-        final Iterator<DecideUpdates> itr = mChecks.iterator();
+        final Iterator<DecideMessages> itr = mChecks.iterator();
         while (itr.hasNext()) {
-            final DecideUpdates updates = itr.next();
-            if (updates.isDestroyed()) {
-                itr.remove();
-            } else {
-                final Result result = runDecideCheck(updates.getToken(), updates.getDistinctId(), poster);
-                updates.reportResults(result.surveys, result.notifications);
+            final DecideMessages updates = itr.next();
+            final String distinctId = updates.getDistinctId();
+            try {
+                final Result result = runDecideCheck(updates.getToken(), distinctId, poster);
+                updates.reportResults(result.surveys, result.notifications, result.eventBindings);
+            } catch (final UnintelligibleMessageException e) {
+                Log.e(LOGTAG, e.getMessage(), e);
             }
         }
     }
 
-    private Result runDecideCheck(final String token, final String distinctId, final ServerMessage poster) {
+    /* package */ static class UnintelligibleMessageException extends Exception {
+		private static final long serialVersionUID = -6501269367559104957L;
+
+		public UnintelligibleMessageException(String message, JSONException cause) {
+            super(message, cause);
+        }
+    }
+
+    private Result runDecideCheck(final String token, final String distinctId, final ServerMessage poster)
+        throws UnintelligibleMessageException {
         final String responseString = getDecideResponseFromServer(token, distinctId, poster);
-        if (MPConfig.DEBUG) Log.d(LOGTAG, "Mixpanel decide server response was:\n" + responseString);
+        if (MPConfig.DEBUG) {
+            Log.v(LOGTAG, "Mixpanel decide server response was:\n" + responseString);
+        }
 
         Result parsed = new Result();
         if (null != responseString) {
@@ -81,15 +95,16 @@ import java.util.List;
         return parsed;
     }// runDecideCheck
 
-    /* package */ static Result parseDecideResponse(String responseString) {
+    /* package */ static Result parseDecideResponse(String responseString)
+        throws UnintelligibleMessageException {
         JSONObject response;
         final Result ret = new Result();
 
         try {
             response = new JSONObject(responseString);
         } catch (final JSONException e) {
-            Log.e(LOGTAG, "Mixpanel endpoint returned unparsable result:\n" + responseString, e);
-            return ret;
+            final String message = "Mixpanel endpoint returned unparsable result:\n" + responseString;
+            throw new UnintelligibleMessageException(message, e);
         }
 
         JSONArray surveys = null;
@@ -126,7 +141,7 @@ import java.util.List;
 
         if (null != notifications) {
             final int notificationsToRead = Math.min(notifications.length(), MPConfig.MAX_NOTIFICATION_CACHE_COUNT);
-            for (int i = 0; null != notifications && i < notificationsToRead; i++) {
+            for (int i = 0; i < notificationsToRead; i++) {
                 try {
                     final JSONObject notificationJson = notifications.getJSONObject(i);
                     final InAppNotification notification = new InAppNotification(notificationJson);
@@ -141,38 +156,60 @@ import java.util.List;
             }
         }
 
+        if (response.has("event_bindings")) {
+            try {
+                ret.eventBindings = response.getJSONArray("event_bindings");
+            } catch (final JSONException e) {
+                Log.e(LOGTAG, "Mixpanel endpoint returned non-array JSON for event bindings: " + response);
+            }
+        }
+
         return ret;
     }
 
     private String getDecideResponseFromServer(String unescapedToken, String unescapedDistinctId, ServerMessage poster) {
-        String escapedToken;
-        String escapedId;
+        final String escapedToken;
+        final String escapedId;
         try {
             escapedToken = URLEncoder.encode(unescapedToken, "utf-8");
-            escapedId = URLEncoder.encode(unescapedDistinctId, "utf-8");
+            if (null != unescapedDistinctId) {
+                escapedId = URLEncoder.encode(unescapedDistinctId, "utf-8");
+            } else {
+                escapedId = null;
+            }
         } catch(final UnsupportedEncodingException e) {
             throw new RuntimeException("Mixpanel library requires utf-8 string encoding to be available", e);
         }
-        final String checkQuery = new StringBuilder()
-                .append("?version=1&lib=android&token=")
-                .append(escapedToken)
-                .append("&distinct_id=")
-                .append(escapedId)
-                .toString();
-        final String[] urls = { mConfig.getDecideEndpoint() + checkQuery, mConfig.getDecideFallbackEndpoint() + checkQuery };
 
-        if (MPConfig.DEBUG) {
-            Log.d(LOGTAG, "Querying decide server at " + urls[0]);
-            Log.d(LOGTAG, "    (with fallback " + urls[1] + ")");
+        final StringBuilder queryBuilder = new StringBuilder()
+                .append("?version=1&lib=android&token=")
+                .append(escapedToken);
+
+        if (null != escapedId) {
+            queryBuilder.append("&distinct_id=").append(escapedId);
         }
 
-        byte[] response = poster.getUrls(mContext, urls);
+        final String checkQuery = queryBuilder.toString();
+        final String[] urls;
+        if (mConfig.getDisableFallback()) {
+            urls = new String[]{mConfig.getDecideEndpoint() + checkQuery};
+        } else {
+            urls = new String[]{mConfig.getDecideEndpoint() + checkQuery,
+                                mConfig.getDecideFallbackEndpoint() + checkQuery};
+        }
+
+        if (MPConfig.DEBUG) {
+            Log.v(LOGTAG, "Querying decide server at " + urls[0]);
+            Log.v(LOGTAG, "    (with fallback " + urls[1] + ")");
+        }
+
+        final byte[] response = poster.getUrls(mContext, urls);
         if (null == response) {
             return null;
         }
         try {
             return new String(response, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
+        } catch (final UnsupportedEncodingException e) {
             throw new RuntimeException("UTF not supported on this platform?", e);
         }
     }
@@ -181,15 +218,15 @@ import java.util.List;
         Bitmap ret = null;
         String[] urls = { notification.getImage2xUrl() };
 
-        WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-        Display display = wm.getDefaultDisplay();
-        int displayWidth = getDisplayWidth(display);
+        final WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        final Display display = wm.getDefaultDisplay();
+        final int displayWidth = getDisplayWidth(display);
 
         if (notification.getType() == InAppNotification.Type.TAKEOVER && displayWidth >= 720) {
             urls = new String[]{ notification.getImage4xUrl(), notification.getImage2xUrl() };
         }
 
-        byte[] response = poster.getUrls(context, urls);
+        final byte[] response = poster.getUrls(context, urls);
         if (null != response) {
             ret = BitmapFactory.decodeByteArray(response, 0, response.length);
         } else {
@@ -213,7 +250,9 @@ import java.util.List;
 
     private final MPConfig mConfig;
     private final Context mContext;
-    private final List<DecideUpdates> mChecks;
+    private final List<DecideMessages> mChecks;
 
-    private static final String LOGTAG = "MixpanelAPI DecideChecker";
+    private static final JSONArray EMPTY_JSON_ARRAY = new JSONArray();
+
+    private static final String LOGTAG = "MixpanelAPI.DecideChecker";
 }

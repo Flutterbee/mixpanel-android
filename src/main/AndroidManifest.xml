@@ -5,8 +5,8 @@
          include this redundant versioning here. If you change
          minSdkVersion or targetSdkVersion here, you must also
          change the relevant properties in build.gradle -->
-    <uses-sdk android:minSdkVersion="8"
-              android:targetSdkVersion="20"
+    <uses-sdk android:minSdkVersion="9"
+              android:targetSdkVersion="21"
               tools:ignore="GradleOverrides"/>
 
     <!--

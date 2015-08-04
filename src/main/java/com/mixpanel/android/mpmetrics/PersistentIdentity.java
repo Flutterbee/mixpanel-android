@@ -22,8 +22,7 @@ import android.util.Log;
 @SuppressLint("CommitPrefEdits")
 /* package */ class PersistentIdentity {
 
-    // Will be called from crazy threads, BUT will be the only thread that has access to the given
-    // SharedPreferences during the run.
+    // Should ONLY be called from an OnPrefsLoadedListener (since it should NEVER be called concurrently)
     public static JSONArray waitingPeopleRecordsForSending(SharedPreferences storedPreferences) {
         JSONArray ret = null;
         final String peopleDistinctId = storedPreferences.getString("people_distinct_id", null);
@@ -60,7 +59,7 @@ import android.util.Log;
             final SharedPreferences referralInfo = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE);
             final SharedPreferences.Editor editor = referralInfo.edit();
             editor.clear();
-            for (final Map.Entry<String, String> entry:properties.entrySet()) {
+            for (final Map.Entry<String, String> entry : properties.entrySet()) {
                 editor.putString(entry.getKey(), entry.getValue());
             }
             writeEdits(editor);
@@ -266,7 +265,9 @@ import android.util.Log;
         try {
             final SharedPreferences prefs = mLoadStoredPreferences.get();
             final String props = prefs.getString("super_properties", "{}");
-            if (MPConfig.DEBUG) Log.d(LOGTAG, "Loading Super Properties " + props);
+            if (MPConfig.DEBUG) {
+                Log.v(LOGTAG, "Loading Super Properties " + props);
+            }
             mSuperPropertiesCache = new JSONObject(props);
         } catch (final ExecutionException e) {
             Log.e(LOGTAG, "Cannot load superProperties from SharedPreferences.", e.getCause());
@@ -292,7 +293,7 @@ import android.util.Log;
             referrerPrefs.registerOnSharedPreferenceChangeListener(mReferrerChangeListener);
 
             final Map<String, ?> prefsMap = referrerPrefs.getAll();
-            for (final Map.Entry<String, ?> entry:prefsMap.entrySet()) {
+            for (final Map.Entry<String, ?> entry : prefsMap.entrySet()) {
                 final String prefsName = entry.getKey();
                 final Object prefsVal = entry.getValue();
                 mReferrerPropertiesCache.put(prefsName, prefsVal.toString());
@@ -312,7 +313,9 @@ import android.util.Log;
         }
 
         final String props = mSuperPropertiesCache.toString();
-        if (MPConfig.DEBUG) Log.d(LOGTAG, "Storing Super Properties " + props);
+        if (MPConfig.DEBUG) {
+            Log.v(LOGTAG, "Storing Super Properties " + props);
+        }
 
         try {
             final SharedPreferences prefs = mLoadStoredPreferences.get();
@@ -405,5 +408,5 @@ import android.util.Log;
 
     private static boolean sReferrerPrefsDirty = true;
     private static final Object sReferrerPrefsLock = new Object();
-    private static final String LOGTAG = "MixpanelAPI PersistentIdentity";
+    private static final String LOGTAG = "MixpanelAPI.PersistentIdentity";
 }

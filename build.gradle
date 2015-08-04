@@ -7,20 +7,20 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:0.12.2'
+        classpath 'com.android.tools.build:gradle:1.0.0'
     }
 }
 
 android {
-    compileSdkVersion 19
-    buildToolsVersion "19.1.0"
+    compileSdkVersion 21
+    buildToolsVersion "21.1.1"
 
     defaultConfig {
         // If you change minSdkVersion or targetSdkVersion below, you must also change
         // the relevant attributes of the <uses-sdk> tag in AndroidManifest.xml
-        minSdkVersion 8
-        targetSdkVersion 20
-        testPackageName "com.mixpanel.android.mpmetrics"
+        minSdkVersion 9
+        targetSdkVersion 21
+        testApplicationId "com.mixpanel.android.mpmetrics"
         testInstrumentationRunner "android.test.InstrumentationTestRunner"
 
         lintOptions {
@@ -30,13 +30,39 @@ android {
     }
 }
 
+// Note- *all* dependencies are marked as optional in our final
+// pom! If you need a transitive dependency in the library, you'll
+// have to change the bit in uploadArchives that marks all dependencies as optional.
+dependencies {
+    compile "com.google.android.gms:play-services:[3.1,)"
+}
+
 android.libraryVariants.all { variant ->
     task("generate${variant.name}Javadoc", type: Javadoc) {
         description "Generates Javadoc for $variant.name."
         source = variant.javaCompile.source
         ext.androidJar = "${android.sdkDirectory}/platforms/${android.compileSdkVersion}/android.jar"
         classpath = files(variant.javaCompile.classpath.files) + files(ext.androidJar)
-        exclude '**/R.*', '**/BuildConfig.java'
+        exclude(
+            '**/R.*',
+            '**/java_websocket/**',
+            '**/util/**',
+            '**/AlwaysSubmittableEditText.java',
+            '**/BuildConfig.java',
+            '**/CardCarouselLayout.java',
+            '**/FadeOnPressButton.java',
+            '**/FadingImageView.java',
+            '**/InAppFragment.java',
+            '**/MiniCircleImageView.java',
+            '**/SurveyActivity.java',
+            '**/SurveyChoiceView.java',
+            '**/SurveyCallbacks.java',
+            '**/TrackingDebug.java',
+            '**/Tweaks.java', // Someday this will be exposed to the public
+            '**/UpdateDisplayState.java',
+            '**/UpdatesFromMixpanel.java',
+            '**/ViewCrawler.java'
+        )
         options {
             encoding = 'UTF-8'
             docEncoding = 'UTF-8'
@@ -45,14 +71,20 @@ android.libraryVariants.all { variant ->
     }
 }
 
-def isReleaseVersion() {
-    return !version.endsWith("SNAPSHOT");
+android.buildTypes.all { buildType ->
+    buildType.buildConfigField "String", "MIXPANEL_VERSION", "\"${project.properties.version}\""
 }
 
-configurations {
-    archives {
-        extendsFrom configurations.default
+allprojects {
+    gradle.projectsEvaluated {
+        tasks.withType(JavaCompile) {
+            options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
+        }
     }
+}
+
+def isReleaseVersion() {
+    return !version.endsWith("SNAPSHOT");
 }
 
 if (isReleaseVersion()) {
@@ -61,7 +93,6 @@ if (isReleaseVersion()) {
         sign configurations.archives
     }
 }
-
 
 uploadArchives {
     configuration = configurations.archives
@@ -99,7 +130,11 @@ uploadArchives {
             }
         }
 
-        if (isReleaseVersion()) {
+        pom.whenConfigured { pom ->
+            pom.dependencies*.optional = true
+        }
+
+        if (isReleaseVersion() && project.hasProperty("sonatypeUsername")) {
             /**
              * In order to do nexus deploys, you'll need to setup a gradle.properties file in $HOME/.gradle
              * with the following properties. You'll need the mixpanel.key file and then import it using GnuPG

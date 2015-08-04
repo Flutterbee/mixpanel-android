@@ -7,13 +7,24 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Bundle;
 import android.util.Log;
 
+
 /**
  * Stores global configuration options for the Mixpanel library.
  */
 public class MPConfig {
-    public static final String VERSION = "4.4.0";
+
+    // Unfortunately, as long as we support building from source in Eclipse,
+    // we can't rely on BuildConfig.MIXPANEL_VERSION existing, so this must
+    // be hard-coded both in our gradle files and here in code.
+    public static final String VERSION = "4.5.3";
 
     public static boolean DEBUG = false;
+
+    /**
+     * Minimum API level for support of rich UI features, like Surveys, In-App notifications, and dynamic event binding.
+     * Devices running OS versions below this level will still support tracking and push notification features.
+     */
+    public static final int UI_FEATURES_MIN_API = 16;
 
     // Name for persistent storage of app referral SharedPreferences
     /* package */ static final String REFERRER_PREFS_NAME = "com.mixpanel.android.mpmetrics.ReferralInfo";
@@ -46,10 +57,14 @@ public class MPConfig {
         mFlushInterval = metaData.getInt("com.mixpanel.android.MPConfig.FlushInterval", 60 * 1000); // one minute default
         mDataExpiration = metaData.getInt("com.mixpanel.android.MPConfig.DataExpiration",  1000 * 60 * 60 * 24 * 5); // 5 days default
         mDisableFallback = metaData.getBoolean("com.mixpanel.android.MPConfig.DisableFallback", true);
+        mResourcePackageName = metaData.getString("com.mixpanel.android.MPConfig.ResourcePackageName"); // default is null
+        mDisableGestureBindingUI = metaData.getBoolean("com.mixpanel.android.MPConfig.DisableGestureBindingUI", false);
+        mDisableEmulatorBindingUI = metaData.getBoolean("com.mixpanel.android.MPConfig.DisableEmulatorBindingUI", false);
+        mDisableAppOpenEvent = metaData.getBoolean("com.mixpanel.android.MPConfig.DisableAppOpenEvent", true);
 
          // Disable if EITHER of these is present and false, otherwise enable
-        boolean surveysAutoCheck = metaData.getBoolean("com.mixpanel.android.MPConfig.AutoCheckForSurveys", true);
-        boolean mixpanelUpdatesAutoShow = metaData.getBoolean("com.mixpanel.android.MPConfig.AutoShowMixpanelUpdates", true);
+        final boolean surveysAutoCheck = metaData.getBoolean("com.mixpanel.android.MPConfig.AutoCheckForSurveys", true);
+        final boolean mixpanelUpdatesAutoShow = metaData.getBoolean("com.mixpanel.android.MPConfig.AutoShowMixpanelUpdates", true);
         mAutoShowMixpanelUpdates = surveysAutoCheck && mixpanelUpdatesAutoShow;
 
         mTestMode = metaData.getBoolean("com.mixpanel.android.MPConfig.TestMode", false);
@@ -90,14 +105,23 @@ public class MPConfig {
         }
         mDecideFallbackEndpoint = decideFallbackEndpoint;
 
+        String editorUrl = metaData.getString("com.mixpanel.android.MPConfig.EditorUrl");
+        if (null == editorUrl) {
+            editorUrl = "wss://switchboard.mixpanel.com/connect/";
+        }
+        mEditorUrl = editorUrl;
+
         if (DEBUG) {
-            Log.d(LOGTAG,
+            Log.v(LOGTAG,
                 "Mixpanel configured with:\n" +
                 "    AutoShowMixpanelUpdates " + getAutoShowMixpanelUpdates() + "\n" +
                 "    BulkUploadLimit " + getBulkUploadLimit() + "\n" +
                 "    FlushInterval " + getFlushInterval() + "\n" +
                 "    DataExpiration " + getDataExpiration() + "\n" +
                 "    DisableFallback " + getDisableFallback() + "\n" +
+                "    DisableAppOpenEvent " + getDisableAppOpenEvent() + "\n" +
+                "    DisableDeviceUIBinding " + getDisableGestureBindingUI() + "\n" +
+                "    DisableEmulatorUIBinding " + getDisableEmulatorBindingUI() + "\n" +
                 "    EnableDebugLogging " + DEBUG + "\n" +
                 "    TestMode " + getTestMode() + "\n" +
                 "    EventsEndpoint " + getEventsEndpoint() + "\n" +
@@ -105,7 +129,8 @@ public class MPConfig {
                 "    DecideEndpoint " + getDecideEndpoint() + "\n" +
                 "    EventsFallbackEndpoint " + getEventsFallbackEndpoint() + "\n" +
                 "    PeopleFallbackEndpoint " + getPeopleFallbackEndpoint() + "\n" +
-                "    DecideFallbackEndpoint " + getDecideFallbackEndpoint() + "\n"
+                "    DecideFallbackEndpoint " + getDecideFallbackEndpoint() + "\n" +
+                "    EditorUrl " + getEditorUrl() + "\n"
             );
         }
     }
@@ -127,6 +152,18 @@ public class MPConfig {
 
     public boolean getDisableFallback() {
         return mDisableFallback;
+    }
+
+    public boolean getDisableGestureBindingUI() {
+        return mDisableGestureBindingUI;
+    }
+
+    public boolean getDisableEmulatorBindingUI() {
+        return mDisableEmulatorBindingUI;
+    }
+
+    public boolean getDisableAppOpenEvent() {
+        return mDisableAppOpenEvent;
     }
 
     public boolean getTestMode() {
@@ -168,6 +205,25 @@ public class MPConfig {
         return mAutoShowMixpanelUpdates;
     }
 
+    // Preferred URL for connecting to the editor websocket
+    public String getEditorUrl() {
+        return mEditorUrl;
+    }
+
+    // Pre-configured package name for resources, if they differ from the application package name
+    //
+    // mContext.getPackageName() actually returns the "application id", which
+    // usually (but not always) the same as package of the generated R class.
+    //
+    //  See: http://tools.android.com/tech-docs/new-build-system/applicationid-vs-packagename
+    //
+    // As far as I can tell, the original package name is lost in the build
+    // process in these cases, and must be specified by the developer using
+    // MPConfig meta-data.
+    public String getResourcePackageName() {
+        return mResourcePackageName;
+    }
+
     ///////////////////////////////////////////////
 
     // Package access for testing only- do not call directly in library code
@@ -190,6 +246,9 @@ public class MPConfig {
     private final int mDataExpiration;
     private final boolean mDisableFallback;
     private final boolean mTestMode;
+    private final boolean mDisableGestureBindingUI;
+    private final boolean mDisableEmulatorBindingUI;
+    private final boolean mDisableAppOpenEvent;
     private final String mEventsEndpoint;
     private final String mEventsFallbackEndpoint;
     private final String mPeopleEndpoint;
@@ -197,8 +256,10 @@ public class MPConfig {
     private final String mDecideEndpoint;
     private final String mDecideFallbackEndpoint;
     private final boolean mAutoShowMixpanelUpdates;
+    private final String mEditorUrl;
+    private final String mResourcePackageName;
 
     private static MPConfig sInstance;
     private static final Object sInstanceLock = new Object();
-    private static final String LOGTAG = "MixpanelAPI.MPConfig";
+    private static final String LOGTAG = "MixpanelAPI.Configuration";
 }

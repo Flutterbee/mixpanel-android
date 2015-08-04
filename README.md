@@ -12,6 +12,20 @@ You can find getting started guides for using Mixpanel at:
 
 See https://github.com/mixpanel/sample-android-mixpanel-integration for a full featured sample application.
 
+License
+-------
+
+See LICENSE File for details. The Base64Coder,
+ConfigurationChecker, and StackBlurManager classes, and the entirety of the
+ com.mixpanel.android.java_websocket package used by this
+software have been licensed from non-Mixpanel sources and modified
+for use in the library. Please see the relevant source files, and the
+LICENSE file in the com.mixpanel.android.java_websocket package for details.
+
+The StackBlurManager class uses an algorithm by Mario Klingemann <mario@quansimondo.com>
+You can learn more about the algorithm at
+http://www.quasimondo.com/StackBlurForCanvas/StackBlurDemo.html.
+
 Want to Contribute?
 -------------------
 The Mixpanel library for Android is an open source project, and we'd love to see your contributions!
@@ -19,6 +33,111 @@ We'd also love for you to come and work with us! Check out http://boards.greenho
 
 Changelog
 ---------
+
+#### v4.5.3
+
+ * Disable $app_open event by default. Users can opt-in to sending automatic $app_open events by adding
+
+ ```
+  <meta-data android:name="com.mixpanel.android.MPConfig.DisableAppOpenEvent"
+       android:value="false" />
+ ```
+
+#### v4.5.2
+
+ * Low level features to allow for more advanced push notifications
+
+ * Bugfix, honor DisableFallback setting in checks for surveys and in-app notifications
+
+#### v4.5.1
+
+ * Update pom to allow users of gradle and maven to use the library without specifying packaging aar packaging.
+
+ * Fix issue that prevented building from source in Eclipse
+
+#### v4.5
+
+ * Introducing dynamic event binding! Developers and stakeholders can now bind Mixpanel events to
+ user interactions using the UI in the Mixpanel web application.
+
+ * added timeEvent, for automatically adding duration to events with a begin and end.
+
+ * New configuration directives
+
+ The 4.5 version of the library allows for meta-data of the form
+
+ ```
+ <meta-data android:name="com.mixpanel.android.MPConfig.ResourcePackageName"
+      android:value="YOUR_PACKAGE_NAME" />
+ ```
+
+ This tag will only be useful in specific circumstances, for users with certain kinds of exotic custom builds.
+ Most users of the library will not require it.
+ (You'll get messages in your logs if the library thinks that you need it)
+
+```
+ <meta-data android:name="com.mixpanel.android.MPConfig.DisableGestureBindingUI"
+      android:value="true" />
+```
+
+When included in your Manifest with value="true", this tag disables the use of the connection
+gesture to the mobile event binding UI in the Mixpanel web application. Events created and bound in the UI
+will still be sent by the application, this directive just disables use the connection gesture
+to pair with a Mixpanel to create and edit event bindings. If the application is run in an
+emulator, it will still check for pairing with the editor.
+
+```
+ <meta-data android:name="com.mixpanel.android.MPConfig.DisableEmulatorBindingUI"
+      android:value="true" />
+```
+
+When included in your Manifest with value="true", this tag disables pairing with the mobile
+event binding UI in the Mixpanel web application. Events created and bound in the UI will
+still be sent by the application, this directive just disables the emulator binding behavior. Use of
+the connection gesture on a physical device will still work for pairing with the editor.
+
+ * Easier use of Proguard with the library
+
+ To use the Mixpanel library with Proguarded builds, add the following to your proguard.cfg file
+
+ ```
+-keep class com.mixpanel.android.abtesting.** { *; }
+-keep class com.mixpanel.android.mpmetrics.** { *; }
+-keep class com.mixpanel.android.surveys.** { *; }
+-keep class com.mixpanel.android.util.** { *; }
+-keep class com.mixpanel.android.java_websocket.** { *; }
+
+-keepattributes InnerClasses
+
+-keep class **.R
+-keep class **.R$* {
+    <fields>;
+}
+```
+
+Mixpanel uses the R class of your package to facilitate easier dynamic tracking across builds of your application.
+
+* The deprecated methods setFlushInterval and checkForSurvey are now no-ops
+
+This method was deprecated in version 4.0, and now is a no-op. To change the flush
+interval for your application, use the com.mixpanel.android.MPConfig.FlushInterval
+meta-data tag in your manifest. To get available surveys, call getSurveyIfAvailable()
+
+* The minimum Android OS version necessary for surveys, in app notifications, and dynamic event binding
+  has been increased to JellyBean/API 16. The minimum OS version to use basic tracking features
+  has been increased to Gingerbread/API 9.
+
+#### v4.4.1
+
+ * Improved support for Push notifications in Android Lollipop/API
+   21. Users sending push notifications to Lollipop devices should
+   include some version of Google Play Services in their build. In
+   include Google Play Services, add the following to your
+   build.gradle file:
+
+```
+   compile "com.google.android.gms:play-services:3.1+" // Any version above 3.1 will work
+```
 
 #### v4.3.1
 
@@ -452,16 +571,3 @@ events being sent.
 * Renamed the event method to track, to be more consistent with the existing APIs.
   Furthermore, the propeties object passed to the new track method is no longer a HashMap, but a JSONObject.
   This will cause types to be correctly preseved in Segmentation.
-
-License
--------
-
-See LICENSE File for details. The Base64Coder,
-ConfigurationChecker, and StackBlurManager classes used by this
-software have been licensed from non-Mixpanel sources and modified
-for use in the library.  Please see the relevant source files for
-details.
-
-The StackBlurManager class uses an algorithm by Mario Klingemann <mario@quansimondo.com>
-You can learn more about the algorithm at
-http://www.quasimondo.com/StackBlurForCanvas/StackBlurDemo.html.

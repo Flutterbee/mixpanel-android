@@ -12,7 +12,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Represents a fullscreen in-app notification delivered from Mixpanel.
+ * Represents a in-app notification delivered from Mixpanel.
  */
 public class InAppNotification implements Parcelable {
     public enum Type {
@@ -53,7 +53,7 @@ public class InAppNotification implements Parcelable {
         mCallToAction = in.readString();
         mCallToActionUrl = in.readString();
 
-        mImage = (Bitmap) in.readParcelable(Bitmap.class.getClassLoader());
+        mImage = in.readParcelable(Bitmap.class.getClassLoader());
     }
 
     /* package */ InAppNotification(JSONObject description) throws BadDecideObjectException {
@@ -200,6 +200,6 @@ public class InAppNotification implements Parcelable {
     private final String mCallToAction;
     private final String mCallToActionUrl;
 
-    private static final String LOGTAG = "MixpanelAPI InAppNotification";
+    private static final String LOGTAG = "MixpanelAPI.InAppNotification";
     private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("(\\.[^./]+$)");
 }

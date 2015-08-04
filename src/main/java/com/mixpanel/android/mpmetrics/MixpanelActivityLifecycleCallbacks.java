@@ -5,7 +5,7 @@ import android.app.Activity;
 import android.app.Application;
 import android.os.Bundle;
 
-@TargetApi(14)
+@TargetApi(MPConfig.UI_FEATURES_MIN_API)
 /* package */ class MixpanelActivityLifecycleCallbacks implements Application.ActivityLifecycleCallbacks {
 
     public MixpanelActivityLifecycleCallbacks(MixpanelAPI mpInstance) {
@@ -22,7 +22,6 @@ import android.os.Bundle;
         mMpInstance.getPeople().showSurveyIfAvailable(activity);
     }
 
-    private final MixpanelAPI mMpInstance;
 
     @Override
     public void onActivityCreated(Activity activity, Bundle savedInstanceState) { }
@@ -41,4 +40,6 @@ import android.os.Bundle;
 
     @Override
     public void onActivityStopped(Activity activity) { }
+
+    private final MixpanelAPI mMpInstance;
 }

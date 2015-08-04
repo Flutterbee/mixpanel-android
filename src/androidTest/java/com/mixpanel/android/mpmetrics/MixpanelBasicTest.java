@@ -38,45 +38,14 @@ public class MixpanelBasicTest extends AndroidTestCase {
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        final SharedPreferences referrerPreferences = getContext().getSharedPreferences("MIXPANEL_TEST_PREFERENCES", Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = referrerPreferences.edit();
-        editor.clear();
-        editor.commit();
-
-        mMockPreferences = new Future<SharedPreferences>() {
-            @Override
-            public boolean cancel(final boolean mayInterruptIfRunning) {
-                return false;
-            }
-
-            @Override
-            public boolean isCancelled() {
-                return false;
-            }
-
-            @Override
-            public boolean isDone() {
-                return false;
-            }
-
-            @Override
-            public SharedPreferences get() throws InterruptedException, ExecutionException {
-                return referrerPreferences;
-            }
-
-            @Override
-            public SharedPreferences get(final long timeout, final TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
-                return referrerPreferences;
-            }
-        };
-
+        mMockPreferences = new TestUtils.EmptyPreferences(getContext());
         AnalyticsMessages messages = AnalyticsMessages.getInstance(getContext());
         messages.hardKill();
         Thread.sleep(500);
     } // end of setUp() method definition
 
-    public void testTrivialRunning() {
-        assertTrue(getContext() != null);
+    public void testVersionsMatch() {
+        assertEquals(BuildConfig.MIXPANEL_VERSION, MPConfig.VERSION);
     }
 
     public void testGeneratedDistinctId() {
@@ -85,7 +54,7 @@ public class MixpanelBasicTest extends AndroidTestCase {
         String generatedId1 = mixpanel.getDistinctId();
         assertTrue(generatedId1 != null);
 
-        mixpanel.clearPreferences();
+        mixpanel.reset();
         String generatedId2 = mixpanel.getDistinctId();
         assertTrue(generatedId2 != null);
         assertTrue(generatedId1 != generatedId2);
@@ -132,8 +101,6 @@ public class MixpanelBasicTest extends AndroidTestCase {
 
         final BlockingQueue<JSONObject> messages = new LinkedBlockingQueue<JSONObject>();
 
-        // If something terrible happens in the worker thread, we
-        // should make sure
         final MPDbAdapter explodingDb = new MPDbAdapter(getContext()) {
             @Override
             public int addJSON(JSONObject message, MPDbAdapter.Table table) {
@@ -141,6 +108,7 @@ public class MixpanelBasicTest extends AndroidTestCase {
                 throw new RuntimeException("BANG!");
             }
         };
+
         final AnalyticsMessages explodingMessages = new AnalyticsMessages(getContext()) {
             // This will throw inside of our worker thread.
             @Override
@@ -156,17 +124,17 @@ public class MixpanelBasicTest extends AndroidTestCase {
         };
 
         try {
-            mixpanel.clearPreferences();
+            mixpanel.reset();
             assertFalse(explodingMessages.isDead());
 
             mixpanel.track("event1", null);
-            JSONObject found = messages.poll(1, TimeUnit.SECONDS);
+            JSONObject found = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertNotNull(found);
             Thread.sleep(1000);
             assertTrue(explodingMessages.isDead());
 
             mixpanel.track("event2", null);
-            JSONObject shouldntFind = messages.poll(1, TimeUnit.SECONDS);
+            JSONObject shouldntFind = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertNull(shouldntFind);
             assertTrue(explodingMessages.isDead());
         } catch (InterruptedException e) {
@@ -190,8 +158,6 @@ public class MixpanelBasicTest extends AndroidTestCase {
                 return listener;
             }
         };
-
-        assertFalse(mixpanel.canUpdate());
 
         mixpanel.getPeople().identify("TEST IDENTITY");
 
@@ -305,31 +271,10 @@ public class MixpanelBasicTest extends AndroidTestCase {
         assertEquals("People Id", setPeopleId);
     }
 
-    public void testDecideUpdatesWithIdentityChanges() {
-        MixpanelAPI metrics = new TestUtils.CleanMixpanelAPI(getContext(), mMockPreferences, "Identity Changes Token");
-
-        assertFalse(metrics.canUpdate());
-
-        metrics.getPeople().identify(null);
-        assertFalse(metrics.canUpdate());
-
-        metrics.getPeople().identify("NOT NULL");
-        assertTrue(metrics.canUpdate());
-
-        metrics.getPeople().identify("Also Not Null");
-        assertTrue(metrics.canUpdate());
-
-        metrics.getPeople().identify(null);
-        assertFalse(metrics.canUpdate());
-
-        metrics.getPeople().identify("Not Null Again");
-        assertTrue(metrics.canUpdate());
-    }
-
     public void testMessageQueuing() {
         final BlockingQueue<String> messages = new LinkedBlockingQueue<String>();
-        final SynchronizedReference<Boolean> okToDecide = new SynchronizedReference<Boolean>();
-        okToDecide.set(false);
+        final SynchronizedReference<Boolean> isIdentifiedRef = new SynchronizedReference<Boolean>();
+        isIdentifiedRef.set(false);
 
         final MPDbAdapter mockAdapter = new MPDbAdapter(getContext()) {
             @Override
@@ -350,12 +295,12 @@ public class MixpanelBasicTest extends AndroidTestCase {
         final ServerMessage mockPoster = new ServerMessage() {
             @Override
             public byte[] performRequest(String endpointUrl, List<NameValuePair> nameValuePairs) {
-                final boolean decideIsOk = okToDecide.get();
+                final boolean isIdentified = isIdentifiedRef.get();
                 if (null == nameValuePairs) {
-                    if (decideIsOk) {
+                    if (isIdentified) {
                         assertEquals("DECIDE_ENDPOINT?version=1&lib=android&token=Test+Message+Queuing&distinct_id=new+person", endpointUrl);
                     } else {
-                        fail("User is unidentified, we shouldn't be checking decide. (URL WAS " + endpointUrl + ")");
+                        assertEquals("DECIDE_ENDPOINT?version=1&lib=android&token=Test+Message+Queuing", endpointUrl);
                     }
                     return TestUtils.bytes("{}");
                 }
@@ -400,6 +345,9 @@ public class MixpanelBasicTest extends AndroidTestCase {
             public String getDecideEndpoint() {
                 return "DECIDE_ENDPOINT";
             }
+
+            @Override
+            public boolean getDisableAppOpenEvent() { return true; }
         };
 
         final AnalyticsMessages listener = new AnalyticsMessages(getContext()) {
@@ -436,66 +384,66 @@ public class MixpanelBasicTest extends AndroidTestCase {
 
         try {
             for (int i=0; i < mockConfig.getBulkUploadLimit() - 1; i++) {
-                String messageTable = messages.poll(1, TimeUnit.SECONDS);
+                String messageTable = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
                 assertEquals("TABLE " + MPDbAdapter.Table.EVENTS.getName(), messageTable);
 
-                expectedJSONMessage = messages.poll(1, TimeUnit.SECONDS);
+                expectedJSONMessage = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
                 JSONObject message = new JSONObject(expectedJSONMessage);
                 assertEquals("frequent event", message.getString("event"));
             }
 
-            String messageTable = messages.poll(1, TimeUnit.SECONDS);
+            String messageTable = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertEquals("TABLE " + MPDbAdapter.Table.EVENTS.getName(), messageTable);
 
-            expectedJSONMessage = messages.poll(1, TimeUnit.SECONDS);
+            expectedJSONMessage = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             JSONObject message = new JSONObject(expectedJSONMessage);
             assertEquals("final event", message.getString("event"));
 
-            String messageFlush = messages.poll(1, TimeUnit.SECONDS);
+            String messageFlush = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertEquals("SENT FLUSH EVENTS_ENDPOINT", messageFlush);
 
-            expectedJSONMessage = messages.poll(1, TimeUnit.SECONDS);
+            expectedJSONMessage = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             JSONArray bigFlush = new JSONArray(expectedJSONMessage);
             assertEquals(mockConfig.getBulkUploadLimit(), bigFlush.length());
 
             metrics.track("next wave", null);
             metrics.flush();
 
-            String nextWaveTable = messages.poll(1, TimeUnit.SECONDS);
+            String nextWaveTable = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertEquals("TABLE " + MPDbAdapter.Table.EVENTS.getName(), nextWaveTable);
 
-            expectedJSONMessage = messages.poll(1, TimeUnit.SECONDS);
+            expectedJSONMessage = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             JSONObject nextWaveMessage = new JSONObject(expectedJSONMessage);
             assertEquals("next wave", nextWaveMessage.getString("event"));
 
-            String manualFlush = messages.poll(1, TimeUnit.SECONDS);
+            String manualFlush = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertEquals("SENT FLUSH EVENTS_ENDPOINT", manualFlush);
 
-            expectedJSONMessage = messages.poll(1, TimeUnit.SECONDS);
+            expectedJSONMessage = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             JSONArray nextWave = new JSONArray(expectedJSONMessage);
             assertEquals(1, nextWave.length());
 
             JSONObject nextWaveEvent = nextWave.getJSONObject(0);
             assertEquals("next wave", nextWaveEvent.getString("event"));
 
-            okToDecide.set(true);
+            isIdentifiedRef.set(true);
             metrics.getPeople().identify("new person");
             metrics.getPeople().set("prop", "yup");
             metrics.flush();
 
-            String peopleTable = messages.poll(1, TimeUnit.SECONDS);
+            String peopleTable = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertEquals("TABLE " + MPDbAdapter.Table.PEOPLE.getName(), peopleTable);
 
-            expectedJSONMessage = messages.poll(1, TimeUnit.SECONDS);
+            expectedJSONMessage = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             JSONObject peopleMessage = new JSONObject(expectedJSONMessage);
 
             assertEquals("new person", peopleMessage.getString("$distinct_id"));
             assertEquals("yup", peopleMessage.getJSONObject("$set").getString("prop"));
 
-            String peopleFlush = messages.poll(1, TimeUnit.SECONDS);
+            String peopleFlush = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             assertEquals("SENT FLUSH PEOPLE_ENDPOINT", peopleFlush);
 
-            expectedJSONMessage = messages.poll(1, TimeUnit.SECONDS);
+            expectedJSONMessage = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
             JSONArray peopleSent = new JSONArray(expectedJSONMessage);
             assertEquals(1, peopleSent.length());
 
@@ -503,141 +451,6 @@ public class MixpanelBasicTest extends AndroidTestCase {
             fail("Expected a log message about mixpanel communication but did not recieve it.");
         } catch (JSONException e) {
             fail("Expected a JSON object message and got something silly instead: " + expectedJSONMessage);
-        }
-    }
-
-    public void testHTTPFailures() {
-        final List<Object> flushResults = new ArrayList<Object>();
-        final BlockingQueue<String> performRequestCalls = new LinkedBlockingQueue<String>();
-
-        final ServerMessage mockPoster = new ServerMessage() {
-            @Override
-            public byte[] performRequest(String endpointUrl, List<NameValuePair> nameValuePairs) throws IOException {
-                if (null == nameValuePairs) {
-                    assertEquals("DECIDE ENDPOINT?version=1&lib=android&token=Test+Message+Queuing&distinct_id=new+person", endpointUrl);
-                    return TestUtils.bytes("{}");
-                }
-
-                Object obj = flushResults.remove(0);
-                try {
-                    assertEquals(nameValuePairs.get(0).getName(), "data");
-                    final String jsonData = Base64Coder.decodeString(nameValuePairs.get(0).getValue());
-                    JSONArray msg = new JSONArray(jsonData);
-                    JSONObject event = msg.getJSONObject(0);
-                    performRequestCalls.put(event.getString("event"));
-
-                    if (obj instanceof IOException) {
-                        throw (IOException)obj;
-                    } else if (obj instanceof MalformedURLException) {
-                        throw (MalformedURLException)obj;
-                    }
-                } catch (JSONException e) {
-                    throw new RuntimeException("Malformed data passed to test mock", e);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException("Could not write message to reporting queue for tests.", e);
-                }
-                return (byte[])obj;
-            }
-        };
-
-        final MPConfig config = new MPConfig(new Bundle()) {
-            public String getDecideEndpoint() {
-                return "DECIDE ENDPOINT";
-            }
-
-            public String getEventsEndpoint() {
-                return "EVENTS ENDPOINT";
-            }
-
-            public boolean getDisableFallback() {
-                return false;
-            }
-        };
-
-        final List<String> cleanupCalls = new ArrayList<String>();
-        final MPDbAdapter mockAdapter = new MPDbAdapter(getContext()) {
-            @Override
-            public void cleanupEvents(String last_id, Table table) {
-                cleanupCalls.add("called");
-                super.cleanupEvents(last_id, table);
-            }
-        };
-
-        final AnalyticsMessages listener = new AnalyticsMessages(getContext()) {
-            @Override
-            protected MPDbAdapter makeDbAdapter(Context context) {
-                return mockAdapter;
-            }
-
-            @Override
-            protected ServerMessage getPoster() {
-                return mockPoster;
-            }
-
-            @Override
-            protected MPConfig getConfig(Context context) {
-                return config;
-            }
-        };
-
-        MixpanelAPI metrics = new TestUtils.CleanMixpanelAPI(getContext(), mMockPreferences, "Test Message Queuing") {
-            @Override
-            protected AnalyticsMessages getAnalyticsMessages() {
-                 return listener;
-            }
-        };
-
-        try {
-            // Basic succeed on first, non-fallback url
-            cleanupCalls.clear();
-            flushResults.add(TestUtils.bytes("1\n"));
-            metrics.track("Should Succeed", null);
-            metrics.flush();
-            Thread.sleep(500);
-            assertEquals("Should Succeed", performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(null, performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(1, cleanupCalls.size());
-
-            // Fallback test--first URL throws IOException
-            cleanupCalls.clear();
-            flushResults.add(new IOException());
-            flushResults.add(TestUtils.bytes("1\n"));
-            metrics.track("Should Succeed", null);
-            metrics.flush();
-            Thread.sleep(500);
-            assertEquals("Should Succeed", performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals("Should Succeed", performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(1, cleanupCalls.size());
-
-            // Two IOExceptions -- assume temporary network failure, no cleanup should happen until
-            // second flush
-            cleanupCalls.clear();
-            flushResults.add(new IOException());
-            flushResults.add(new IOException());
-            flushResults.add(TestUtils.bytes("1\n"));
-            metrics.track("Should Succeed", null);
-            metrics.flush();
-            Thread.sleep(500);
-            assertEquals("Should Succeed", performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals("Should Succeed", performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(0, cleanupCalls.size());
-            metrics.flush();
-            Thread.sleep(500);
-            assertEquals("Should Succeed", performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(null, performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(1, cleanupCalls.size());
-
-            // MalformedURLException -- should dump the events since this will probably never succeed
-            cleanupCalls.clear();
-            flushResults.add(new MalformedURLException());
-            metrics.track("Should Fail", null);
-            metrics.flush();
-            Thread.sleep(500);
-            assertEquals("Should Fail", performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(null, performRequestCalls.poll(2, TimeUnit.SECONDS));
-            assertEquals(1, cleanupCalls.size());
-        } catch (InterruptedException e) {
-            throw new RuntimeException("Test was interrupted.");
         }
     }
 
@@ -694,7 +507,7 @@ public class MixpanelBasicTest extends AndroidTestCase {
 
     public void testPersistence() {
         MixpanelAPI metricsOne = new MixpanelAPI(getContext(), mMockPreferences, "SAME TOKEN");
-        metricsOne.clearPreferences();
+        metricsOne.reset();
 
         JSONObject props;
         try {
@@ -727,6 +540,11 @@ public class MixpanelBasicTest extends AndroidTestCase {
         class ListeningAPI extends MixpanelAPI {
             public ListeningAPI(Context c, Future<SharedPreferences> prefs, String token) {
                 super(c, prefs, token);
+            }
+
+            @Override
+            /* package */ boolean sendAppOpen() {
+                return false;
             }
 
             @Override
@@ -822,7 +640,7 @@ public class MixpanelBasicTest extends AndroidTestCase {
                         return analyticsMessages;
                     }
                 };
-                mixpanel.clearPreferences();
+                mixpanel.reset();
                 mixpanel.track("test in thread", new JSONObject());
             }
         }
@@ -832,7 +650,7 @@ public class MixpanelBasicTest extends AndroidTestCase {
         final BlockingQueue<JSONObject> messages = new LinkedBlockingQueue<JSONObject>();
         TestThread testThread = new TestThread(messages);
         testThread.start();
-        JSONObject found = messages.poll(1, TimeUnit.SECONDS);
+        JSONObject found = messages.poll(POLL_WAIT_SECONDS, TimeUnit.SECONDS);
         assertNotNull(found);
         assertEquals(found.getString("event"), "test in thread");
         assertTrue(found.getJSONObject("properties").has("$bluetooth_version"));
@@ -846,6 +664,9 @@ public class MixpanelBasicTest extends AndroidTestCase {
         appInfo.metaData.putInt("com.mixpanel.android.MPConfig.DataExpiration", 3);
         appInfo.metaData.putBoolean("com.mixpanel.android.MPConfig.DisableFallback", true);
         appInfo.metaData.putBoolean("com.mixpanel.android.MPConfig.AutoShowMixpanelUpdates", false);
+        appInfo.metaData.putBoolean("com.mixpanel.android.MPConfig.DisableGestureBindingUI", true);
+        appInfo.metaData.putBoolean("com.mixpanel.android.MPConfig.DisableEmulatorBindingUI", true);
+        appInfo.metaData.putBoolean("com.mixpanel.android.MPConfig.DisableAppOpenEvent", true);
 
         appInfo.metaData.putString("com.mixpanel.android.MPConfig.EventsEndpoint", "EVENTS ENDPOINT");
         appInfo.metaData.putString("com.mixpanel.android.MPConfig.EventsFallbackEndpoint", "EVENTS FALLBACK ENDPOINT");
@@ -880,6 +701,9 @@ public class MixpanelBasicTest extends AndroidTestCase {
         assertEquals(2, testConfig.getFlushInterval());
         assertEquals(3, testConfig.getDataExpiration());
         assertEquals(true, testConfig.getDisableFallback());
+        assertEquals(true, testConfig.getDisableEmulatorBindingUI());
+        assertEquals(true, testConfig.getDisableGestureBindingUI());
+        assertEquals(true, testConfig.getDisableAppOpenEvent());
         assertEquals(false, testConfig.getAutoShowMixpanelUpdates());
         assertEquals("EVENTS ENDPOINT", testConfig.getEventsEndpoint());
         assertEquals("EVENTS FALLBACK ENDPOINT", testConfig.getEventsFallbackEndpoint());
@@ -1012,4 +836,6 @@ public class MixpanelBasicTest extends AndroidTestCase {
     }
 
     private Future<SharedPreferences> mMockPreferences;
+
+    private static final int POLL_WAIT_SECONDS = 5;
 }
